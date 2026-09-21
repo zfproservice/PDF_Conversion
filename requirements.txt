@@ -1,5 +1,6 @@
 streamlit
-google-genai
 pandas
 openpyxl
-pdfplumber
+mistralai
+PyMuPDF
+requests
