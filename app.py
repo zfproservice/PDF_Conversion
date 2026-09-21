@@ -66,29 +66,42 @@ if uploaded_file and api_key:
                 4. Do not wrap the response in markdown code blocks like ```json. Return ONLY raw JSON text.
                 """
 
-                # Step 2: Extract data using Gemini API
+                # Step 2: Extract data using Gemini AI (Model Fallback & Backoff)
                 st.write("🤖 Extracting table data using Gemini AI...")
                 progress_bar.progress(35)
 
-                max_attempts = 3
+                max_attempts = 4
                 response = None
+                success = False
                 
                 for attempt in range(max_attempts):
-                    try:
-                        response = client.models.generate_content(
-                            model='gemini-3.6-flash',
-                            contents=[
-                                types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
-                                prompt
-                            ]
-                        )
-                        break  # Success, exit retry loop
-                    except Exception as e:
-                        if "503" in str(e) and attempt < max_attempts - 1:
-                            st.write(f"⏳ Server busy (503). Retrying attempt {attempt + 2}/{max_attempts}...")
-                            time.sleep(4)
-                        else:
-                            raise e
+                    # Try Flash first, then fallback to Pro if Flash is busy
+                    for model_name in ['gemini-3.6-flash', 'gemini-3.6-pro']:
+                        try:
+                            response = client.models.generate_content(
+                                model=model_name,
+                                contents=[
+                                    types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
+                                    prompt
+                                ]
+                            )
+                            success = True
+                            break  # Success, exit the model loop
+                        except Exception as e:
+                            if "503" not in str(e):
+                                raise e  # Surface non-503 errors immediately
+
+                    if success:
+                        break  # Exit the retry loop
+                        
+                    # If both models return 503, wait with exponential backoff (4s, 8s, 16s)
+                    if attempt < max_attempts - 1:
+                        wait_time = 4 * (2 ** attempt)
+                        st.write(f"⏳ Servers busy (503). Waiting {wait_time}s before retry attempt {attempt + 2}/{max_attempts}...")
+                        time.sleep(wait_time)
+                
+                if not success or response is None:
+                    raise Exception("503 UNAVAILABLE: Both Flash and Pro models are currently overloaded. Please try again in a few moments.")
 
                 # Step 3: Parse and clean data
                 st.write("🧹 Cleaning extracted data & resolving ditto marks...")
