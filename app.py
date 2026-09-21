@@ -11,28 +11,24 @@ st.set_page_config(
     page_title="PDF to Excel Converter", page_icon="📊", layout="centered"
 )
 
-# Load API key securely from Streamlit Secrets
-if "MISTRAL_API_KEY" in st.secrets:
-  api_key = st.secrets["MISTRAL_API_KEY"].strip()
-else:
-  st.error(
-      "MISTRAL_API_KEY not found in Streamlit secrets. Please configure it in"
-      " your `.streamlit/secrets.toml` file."
-  )
-  st.stop()
-
-st.title("📄 PDF to Excel Converter (Mistral Powered)")
+st.title("📄 PDF to Excel Converter (Multi-AI Powered)")
 st.write(
-    "Upload a PDF service form. The app will extract the text, structure the"
-    ' table data (auto-filling ditto marks `"`), and generate an Excel'
-    " spreadsheet."
+    "Upload a PDF service form, select your preferred AI provider, and"
+    " convert it into an interactive table and Excel spreadsheet."
 )
+
+# AI Provider Selection in the main app area (No sidebar settings)
+col1, col2 = st.columns([2, 2])
+with col1:
+  ai_provider = st.selectbox(
+      "Select AI Provider", ["Mistral AI (mistral-small)", "Google Gemini (gemini-1.5-flash)"]
+  )
 
 uploaded_file = st.file_uploader("Upload your PDF document", type=["pdf"])
 
 if uploaded_file is not None:
-  if st.button("Convert to Excel", type="primary"):
-    with st.spinner("Extracting text and processing with Mistral AI..."):
+  if st.button("🚀 Convert to Excel", type="primary"):
+    with st.spinner(f"Extracting text and processing with {ai_provider.split(' ')[0]}..."):
       try:
         # 1. Extract text from PDF locally using PyMuPDF
         extracted_text = ""
@@ -63,34 +59,61 @@ if uploaded_file is not None:
                 {extracted_text}
                 """
 
-        # 3. Call Mistral API using built-in urllib
-        proto = "https"
-        host = "api.mistral.ai"
-        path = "/v1/chat/completions"
-        url = f"{proto}://{host}{path}"
+        content = ""
 
-        payload = {
-            "model": "mistral-small-latest",
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-        }
+        # 3. Route request based on selected provider
+        if "Mistral" in ai_provider:
+          if "MISTRAL_API_KEY" not in st.secrets:
+            st.error("MISTRAL_API_KEY missing from Streamlit secrets.")
+            st.stop()
+          api_key = st.secrets["MISTRAL_API_KEY"].strip()
 
-        data_bytes = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=data_bytes,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
+          url = "[https://api.mistral.ai/v1/chat/completions](https://api.mistral.ai/v1/chat/completions)"
+          payload = {
+              "model": "mistral-small-latest",
+              "messages": [{"role": "user", "content": prompt}],
+              "temperature": 0.1,
+          }
+          headers = {
+              "Authorization": f"Bearer {api_key}",
+              "Content-Type": "application/json",
+          }
 
-        with urllib.request.urlopen(req, timeout=60) as response:
-          response_body = response.read().decode("utf-8")
-          result_json = json.loads(response_body)
+          data_bytes = json.dumps(payload).encode("utf-8")
+          req = urllib.request.Request(
+              url, data=data_bytes, headers=headers, method="POST"
+          )
 
-        content = result_json["choices"][0]["message"]["content"].strip()
+          with urllib.request.urlopen(req, timeout=60) as response:
+            res_json = json.loads(response.read().decode("utf-8"))
+            content = res_json["choices"][0]["message"]["content"].strip()
+
+        else:  # Google Gemini
+          if "GEMINI_API_KEY" not in st.secrets:
+            st.error("GEMINI_API_KEY missing from Streamlit secrets.")
+            st.stop()
+          api_key = st.secrets["GEMINI_API_KEY"].strip()
+
+          # Gemini REST API endpoint
+          url = f"[https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=){api_key}"
+          payload = {
+              "contents": [{
+                  "parts": [{"text": prompt}]
+              }],
+              "generationConfig": {"temperature": 0.1},
+          }
+          headers = {"Content-Type": "application/json"}
+
+          data_bytes = json.dumps(payload).encode("utf-8")
+          req = urllib.request.Request(
+              url, data=data_bytes, headers=headers, method="POST"
+          )
+
+          with urllib.request.urlopen(req, timeout=60) as response:
+            res_json = json.loads(response.read().decode("utf-8"))
+            content = (
+                res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+            )
 
         # Clean markdown wrappers if returned by the model
         if content.startswith("```"):
@@ -103,7 +126,7 @@ if uploaded_file is not None:
         df = pd.DataFrame(data)
 
         st.success("Successfully converted PDF to Excel!")
-        st.dataframe(df)
+        st.dataframe(df, use_container_width=True)
 
         # 4. Generate Excel file in memory
         output = io.BytesIO()
@@ -125,13 +148,13 @@ if uploaded_file is not None:
         if http_err.code == 429:
           st.error(
               "⏳ **Rate Limit Reached (429 Too Many Requests):** You've"
-              " made too many requests in a short time. Please wait about"
-              " 60 seconds before trying again."
+              " hit the limit for this provider. Try switching to the other"
+              " AI provider in the dropdown above or wait a minute."
           )
         else:
           st.error(
               f"HTTP Error {http_err.code}: {http_err.reason} - Please check"
-              " your API key or endpoint."
+              " your API keys."
           )
       except Exception as e:
         st.error(f"An error occurred during conversion: {e}")
