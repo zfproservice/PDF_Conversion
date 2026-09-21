@@ -76,7 +76,7 @@ if uploaded_file is not None:
 
           url = "[https://openrouter.ai/api/v1/chat/completions](https://openrouter.ai/api/v1/chat/completions)"
           payload = {
-              "model": "mistralai/mistral-small",
+              "model": "google/gemini-2.5-flash",  # Stable OpenRouter model slug
               "messages": [{"role": "user", "content": prompt}],
           }
           headers = {
