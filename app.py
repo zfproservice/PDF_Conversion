@@ -1,136 +1,83 @@
-import base64
-import io
-import json
-import pandas as pd
-import requests
+import os
 import streamlit as st
+import pymupdf  # PyMuPDF for robust PDF text extraction
+from mistralai import Mistral
 
-# Streamlit Page Setup
+# Page configuration
 st.set_page_config(
-    page_title="PDF to Excel Converter (Mistral Powered)", layout="centered"
+    page_title="Mistral Assistant",
+    page_icon="🤖",
+    layout="centered"
 )
 
-st.title("📄 PDF to Excel Converter (Powered by Mistral AI)")
-st.markdown(
-    "Upload your scanned service records or forms (PDF). Mistral's vision model"
-    " will extract the tabular data, resolve any ditto marks (`\"`), and"
-    " convert it into an interactive table and Excel file."
-)
+# Initialize Mistral client using Streamlit Secrets (Sidebar settings removed)
+if "MISTRAL_API_KEY" in st.secrets:
+    api_key = st.secrets["MISTRAL_API_KEY"]
+else:
+    st.error("MISTRAL_API_KEY not found in Streamlit secrets. Please configure it in your `.streamlit/secrets.toml` file.")
+    st.stop()
 
-# Automatically check Streamlit Secrets first
-mistral_api_key = (
-    st.secrets.get("MISTRAL_API_KEY")
-    if "MISTRAL_API_KEY" in st.secrets
-    else None
-)
+client = Mistral(api_key=api_key)
 
-# Sidebar Configuration (Only show input box if secret is not found)
-with st.sidebar:
-  st.header("⚙️ Configuration")
-  if not mistral_api_key:
-    mistral_api_key = st.text_input(
-        "Mistral API Key",
-        type="password",
-        help="Get your free key from console.mistral.ai",
-    )
-    st.caption("No secret detected. Please enter your key above.")
-  else:
-    st.success("🔒 API Key loaded securely from Secrets!")
+st.title("🤖 Mistral AI Assistant")
+st.write("Upload a document or ask a question to get started.")
 
-# File Uploader
-uploaded_file = st.file_uploader(
-    "Upload Scanned PDF Document", type=["pdf"], accept_multiple_files=False
-)
+# File uploader for documents/PDFs
+uploaded_file = st.file_uploader("Upload a PDF document", type=["pdf"])
 
-if uploaded_file and mistral_api_key:
-  pdf_bytes = uploaded_file.read()
+extracted_text = ""
+if uploaded_file is not None:
+    try:
+        # Open PDF with PyMuPDF (fitz) and extract text to prevent 422 API errors
+        with pymupdf.open(stream=uploaded_file.read(), filetype="pdf") as doc:
+            for page_num, page in enumerate(doc):
+                extracted_text += f"\n--- Page {page_num + 1} ---\n" + page.get_text()
+        st.success(f"Successfully extracted text from {uploaded_file.name}!")
+    except Exception as e:
+        st.error(f"Error reading PDF: {e}")
 
-  if st.button("🚀 Extract Data & Convert to Excel", type="primary"):
-    with st.spinner("Processing scanned PDF with Mistral Vision API..."):
-      try:
-        base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+# Initialize chat history in session state
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-        prompt = (
-            "Analyze this scanned document/form carefully. Extract all table rows"
-            " and field records into a valid JSON array of objects containing"
-            " clear key-value pairs. If there are quotation marks or ditto"
-            " marks (\") representing repeated values from the row above,"
-            " resolve and fill them in with the actual value they represent."
-            " Return ONLY valid JSON without any surrounding explanation."
-        )
+# Display prior chat messages
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-        headers = {
-            "Authorization": f"Bearer {mistral_api_key}",
-            "Content-Type": "application/json",
-        }
+# Handle user chat input
+if prompt := st.chat_input("What would you like to know about your document or query?"):
+    # Combine prompt with extracted PDF text if a document was uploaded
+    full_prompt = prompt
+    if extracted_text:
+        full_prompt = f"Here is the document content:\n{extracted_text}\n\nUser Query: {prompt}"
 
-        payload = {
-            "model": "mistral-small-latest",
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": (
-                            f"data:application/pdf;base64,{base64_pdf}"
-                        ),
-                    },
-                ],
-            }],
-            "temperature": 0.1,
-        }
+    # Append user message to history
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-        response = requests.post(
-            "https://api.mistral.ai/v1/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=120,
-        )
-        response.raise_for_status()
+    # Call Mistral Chat Completions API
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            try:
+                # Format messages for Mistral API
+                api_messages = [
+                    {"role": m["role"], "content": m["content"]}
+                    for m in st.session_state.messages[:-1]
+                ]
+                api_messages.append({"role": "user", "content": full_prompt})
 
-        result_json = response.json()
-        content = result_json["choices"][0]["message"]["content"]
-
-        cleaned_content = content.strip()
-        if cleaned_content.startswith("```json"):
-          cleaned_content = cleaned_content[7:]
-        if cleaned_content.endswith("```"):
-          cleaned_content = cleaned_content[:-3]
-        cleaned_content = cleaned_content.strip()
-
-        data = json.loads(cleaned_content)
-        df = pd.DataFrame(data)
-
-        st.success("Data extracted successfully!")
-        st.dataframe(df, use_container_width=True)
-
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-          df.to_excel(writer, index=False, sheet_name="Extracted Records")
-        excel_data = output.getvalue()
-
-        st.download_button(
-            label="📥 Download Excel File",
-            data=excel_data,
-            file_name="extracted_service_records.xlsx",
-            mime=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
-        )
-
-      except requests.exceptions.RequestException as req_err:
-        st.error(f"API Connection Error: {req_err}")
-      except json.JSONDecodeError:
-        st.error(
-            "Failed to parse model output as JSON. Raw response from model:"
-        )
-        st.code(content)
-      except Exception as e:
-        st.error(f"An unexpected error occurred: {e}")
-
-elif uploaded_file and not mistral_api_key:
-  st.warning(
-      "⚠️ Please provide your Mistral API Key via Streamlit Secrets or the"
-      " sidebar to proceed."
-  )
+                response = client.chat.complete(
+                    model="mistral-small-latest",
+                    messages=api_messages
+                )
+                
+                assistant_response = response.choices[0].message.content
+                st.markdown(assistant_response)
+                
+                # Append assistant response to history
+                st.session_state.messages.append({"role": "assistant", "content": assistant_response})
+            
+            except Exception as e:
+                st.error(f"API Error: {e}")
