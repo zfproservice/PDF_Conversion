@@ -10,9 +10,6 @@ st.set_page_config(
     page_title="PDF to Excel Converter", page_icon="📊", layout="centered"
 )
 
-# Visual check to confirm the new file is running
-st.sidebar.caption("App Version: v3-urllib (No Requests)")
-
 # Load API key securely from Streamlit Secrets
 if "MISTRAL_API_KEY" in st.secrets:
   api_key = st.secrets["MISTRAL_API_KEY"].strip()
@@ -65,7 +62,7 @@ if uploaded_file is not None:
                 {extracted_text}
                 """
 
-        # 3. Call Mistral API using built-in urllib (Completely avoids requests library)
+        # 3. Call Mistral API using built-in urllib (Clean string without brackets)
         url = "[https://api.mistral.ai/v1/chat/completions](https://api.mistral.ai/v1/chat/completions)"
         payload = {
             "model": "mistral-small-latest",
