@@ -62,8 +62,12 @@ if uploaded_file is not None:
                 {extracted_text}
                 """
 
-        # 3. Call Mistral API using built-in urllib (Clean string without brackets)
-        url = "[https://api.mistral.ai/v1/chat/completions](https://api.mistral.ai/v1/chat/completions)"
+        # 3. Safely assemble URL using variables (Prevents any bracket typo)
+        proto = "https"
+        host = "api.mistral.ai"
+        path = "/v1/chat/completions"
+        url = f"{proto}://{host}{path}"
+
         payload = {
             "model": "mistral-small-latest",
             "messages": [{"role": "user", "content": prompt}],
