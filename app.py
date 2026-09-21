@@ -1,83 +1,117 @@
-import os
-import streamlit as st
+import io
+import json
+import pandas as pd
 import pymupdf  # PyMuPDF for robust PDF text extraction
-from mistralai import Mistral
+import requests
+import streamlit as st
 
 # Page configuration
 st.set_page_config(
-    page_title="Mistral Assistant",
-    page_icon="🤖",
-    layout="centered"
+    page_title="PDF to Excel Converter", page_icon="📊", layout="centered"
 )
 
-# Initialize Mistral client using Streamlit Secrets (Sidebar settings removed)
+# Load API key securely from Streamlit Secrets (Sidebar settings removed)
 if "MISTRAL_API_KEY" in st.secrets:
-    api_key = st.secrets["MISTRAL_API_KEY"]
+  api_key = st.secrets["MISTRAL_API_KEY"]
 else:
-    st.error("MISTRAL_API_KEY not found in Streamlit secrets. Please configure it in your `.streamlit/secrets.toml` file.")
-    st.stop()
+  st.error(
+      "MISTRAL_API_KEY not found in Streamlit secrets. Please configure it in"
+      " your `.streamlit/secrets.toml` file."
+  )
+  st.stop()
 
-client = Mistral(api_key=api_key)
+st.title("📄 PDF to Excel Converter (Mistral Powered)")
+st.write(
+    "Upload a PDF service form. The app will extract the text, structure the"
+    ' table data (auto-filling ditto marks `"`), and generate an Excel'
+    " spreadsheet."
+)
 
-st.title("🤖 Mistral AI Assistant")
-st.write("Upload a document or ask a question to get started.")
+uploaded_file = st.file_uploader("Upload your PDF document", type=["pdf"])
 
-# File uploader for documents/PDFs
-uploaded_file = st.file_uploader("Upload a PDF document", type=["pdf"])
-
-extracted_text = ""
 if uploaded_file is not None:
-    try:
-        # Open PDF with PyMuPDF (fitz) and extract text to prevent 422 API errors
+  if st.button("Convert to Excel", type="primary"):
+    with st.spinner("Extracting text and processing with Mistral AI..."):
+      try:
+        # 1. Extract text from PDF locally using PyMuPDF
+        extracted_text = ""
         with pymupdf.open(stream=uploaded_file.read(), filetype="pdf") as doc:
-            for page_num, page in enumerate(doc):
-                extracted_text += f"\n--- Page {page_num + 1} ---\n" + page.get_text()
-        st.success(f"Successfully extracted text from {uploaded_file.name}!")
-    except Exception as e:
-        st.error(f"Error reading PDF: {e}")
+          for page_num, page in enumerate(doc):
+            extracted_text += (
+                f"\n--- Page {page_num + 1} ---\n" + page.get_text()
+            )
 
-# Initialize chat history in session state
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+        if not extracted_text.strip():
+          raise Exception(
+              "No text could be extracted from this PDF. It may be a scanned"
+              " image format."
+          )
 
-# Display prior chat messages
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-# Handle user chat input
-if prompt := st.chat_input("What would you like to know about your document or query?"):
-    # Combine prompt with extracted PDF text if a document was uploaded
-    full_prompt = prompt
-    if extracted_text:
-        full_prompt = f"Here is the document content:\n{extracted_text}\n\nUser Query: {prompt}"
-
-    # Append user message to history
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    # Call Mistral Chat Completions API
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            try:
-                # Format messages for Mistral API
-                api_messages = [
-                    {"role": m["role"], "content": m["content"]}
-                    for m in st.session_state.messages[:-1]
-                ]
-                api_messages.append({"role": "user", "content": full_prompt})
-
-                response = client.chat.complete(
-                    model="mistral-small-latest",
-                    messages=api_messages
-                )
+        # 2. Build structured extraction prompt
+        prompt = f"""
+                Analyze the following extracted text from a field service PDF record. 
+                Extract all tabular data and records into a valid JSON array of objects.
                 
-                assistant_response = response.choices[0].message.content
-                st.markdown(assistant_response)
+                Rules:
+                1. Output MUST be a valid JSON array of objects representing rows.
+                2. Extract all headers accurately (e.g., S/N, Customer, Model / Spec No, Serial No, Vehicle No, OEM, Travelling Start, Travelling End, Working Start, Working End, Report No, Date, Depot, Need to Down, Remarks).
+                3. Resolve any ditto marks (") or repeated elements from previous rows with the actual text values.
+                4. Return ONLY raw JSON text without any markdown code block wrappers like ```json.
                 
-                # Append assistant response to history
-                st.session_state.messages.append({"role": "assistant", "content": assistant_response})
-            
-            except Exception as e:
-                st.error(f"API Error: {e}")
+                Document Content:
+                {extracted_text}
+                """
+
+        # 3. Call Mistral API via requests
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": "mistral-small-latest",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+        }
+
+        response = requests.post(
+            "[https://api.mistral.ai/v1/chat/completions](https://api.mistral.ai/v1/chat/completions)",
+            headers=headers,
+            json=payload,
+            timeout=60,
+        )
+        response.raise_for_status()
+
+        result_json = response.json()
+        content = result_json["choices"][0]["message"]["content"].strip()
+
+        # Clean markdown wrappers if returned by the model
+        if content.startswith("```"):
+          content = content.split("\n", 1)[1].rsplit("\n", 1)[0]
+        if content.lower().startswith("json"):
+          content = content[4:].strip()
+
+        # Parse into Pandas DataFrame
+        data = json.loads(content)
+        df = pd.DataFrame(data)
+
+        st.success("Successfully converted PDF to Excel!")
+        st.dataframe(df)
+
+        # 4. Generate Excel file in memory
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+          df.to_excel(writer, index=False, sheet_name="Extracted Records")
+        excel_bytes = output.getvalue()
+        file_name = uploaded_file.name.replace(".pdf", ".xlsx")
+
+        st.download_button(
+            label="📥 Download Excel File",
+            data=excel_bytes,
+            file_name=file_name,
+            mime=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+
+      except Exception as e:
+        st.error(f"An error occurred during conversion: {str(e)}")
