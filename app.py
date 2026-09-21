@@ -17,18 +17,21 @@ st.write(
     " convert it into an interactive table and Excel spreadsheet."
 )
 
-# AI Provider Selection in the main app area (No sidebar settings)
+# AI Provider Selection
 col1, col2 = st.columns([2, 2])
 with col1:
   ai_provider = st.selectbox(
-      "Select AI Provider", ["Mistral AI (mistral-small)", "Google Gemini (gemini-1.5-flash)"]
+      "Select AI Provider",
+      ["Mistral AI (mistral-small)", "Google Gemini (gemini-1.5-flash)"],
   )
 
 uploaded_file = st.file_uploader("Upload your PDF document", type=["pdf"])
 
 if uploaded_file is not None:
   if st.button("🚀 Convert to Excel", type="primary"):
-    with st.spinner(f"Extracting text and processing with {ai_provider.split(' ')[0]}..."):
+    with st.spinner(
+        f"Extracting text and processing with {ai_provider.split(' ')[0]}..."
+    ):
       try:
         # 1. Extract text from PDF locally using PyMuPDF
         extracted_text = ""
@@ -60,6 +63,9 @@ if uploaded_file is not None:
                 """
 
         content = ""
+        url = ""
+        payload = {}
+        headers = {}
 
         # 3. Route request based on selected provider
         if "Mistral" in ai_provider:
@@ -79,22 +85,12 @@ if uploaded_file is not None:
               "Content-Type": "application/json",
           }
 
-          data_bytes = json.dumps(payload).encode("utf-8")
-          req = urllib.request.Request(
-              url, data=data_bytes, headers=headers, method="POST"
-          )
-
-          with urllib.request.urlopen(req, timeout=60) as response:
-            res_json = json.loads(response.read().decode("utf-8"))
-            content = res_json["choices"][0]["message"]["content"].strip()
-
         else:  # Google Gemini
           if "GEMINI_API_KEY" not in st.secrets:
             st.error("GEMINI_API_KEY missing from Streamlit secrets.")
             st.stop()
           api_key = st.secrets["GEMINI_API_KEY"].strip()
 
-          # Gemini REST API endpoint
           url = f"[https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=){api_key}"
           payload = {
               "contents": [{
@@ -104,13 +100,20 @@ if uploaded_file is not None:
           }
           headers = {"Content-Type": "application/json"}
 
-          data_bytes = json.dumps(payload).encode("utf-8")
-          req = urllib.request.Request(
-              url, data=data_bytes, headers=headers, method="POST"
-          )
+        # Bulletproof URL sanitization (strips any accidental brackets, quotes, or spaces)
+        url = url.strip("[]'\" \n\t")
 
-          with urllib.request.urlopen(req, timeout=60) as response:
-            res_json = json.loads(response.read().decode("utf-8"))
+        data_bytes = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url, data=data_bytes, headers=headers, method="POST"
+        )
+
+        with urllib.request.urlopen(req, timeout=60) as response:
+          res_json = json.loads(response.read().decode("utf-8"))
+
+          if "Mistral" in ai_provider:
+            content = res_json["choices"][0]["message"]["content"].strip()
+          else:
             content = (
                 res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
             )
