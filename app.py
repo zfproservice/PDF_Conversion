@@ -10,9 +10,9 @@ st.set_page_config(
     page_title="PDF to Excel Converter", page_icon="📊", layout="centered"
 )
 
-# Load API key securely from Streamlit Secrets
+# Load API key securely from Streamlit Secrets with whitespace stripping
 if "MISTRAL_API_KEY" in st.secrets:
-  api_key = st.secrets["MISTRAL_API_KEY"]
+  api_key = st.secrets["MISTRAL_API_KEY"].strip()
 else:
   st.error(
       "MISTRAL_API_KEY not found in Streamlit secrets. Please configure it in"
@@ -62,8 +62,7 @@ if uploaded_file is not None:
                 {extracted_text}
                 """
 
-        # 3. Call Mistral API cleanly via requests (No SDK import issues)
-        url = "[https://api.mistral.ai/v1/chat/completions](https://api.mistral.ai/v1/chat/completions)"
+        # 3. Call Mistral API with hardcoded URL to prevent connection adapter errors
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -74,7 +73,12 @@ if uploaded_file is not None:
             "temperature": 0.1,
         }
 
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        response = requests.post(
+            "[https://api.mistral.ai/v1/chat/completions](https://api.mistral.ai/v1/chat/completions)",
+            headers=headers,
+            json=payload,
+            timeout=60,
+        )
         response.raise_for_status()
 
         result_json = response.json()
