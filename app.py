@@ -11,7 +11,7 @@ import requests
 st.set_page_config(page_title="PDF to Excel Converter", page_icon="📊", layout="centered")
 
 st.title("📄 PDF to Editable Excel Converter")
-st.write("Upload a PDF tracking form or record. The app will extract table data, auto-fill ditto marks (`\"`), and generate an Excel spreadsheet. It includes a free fallback if primary servers are busy.")
+st.write("Upload a PDF tracking form or record. The app will extract table data, auto-fill ditto marks (`\"`), and generate an Excel spreadsheet. It includes free fallbacks if primary servers are busy.")
 
 # Retrieve API Keys from Streamlit Secrets or sidebar input
 gemini_api_key = st.secrets.get("GEMINI_API_KEY") if "GEMINI_API_KEY" in st.secrets else None
@@ -101,7 +101,7 @@ if uploaded_file and gemini_api_key:
                 4. Do not wrap the response in markdown code blocks like ```json. Return ONLY raw JSON text.
                 """
 
-                # Step 2: Extract data using Gemini AI
+                # Step 2: Extract data using Gemini AI with stable production models
                 st.write("🤖 Extracting table data using Gemini AI...")
                 progress_bar.progress(35)
 
@@ -110,7 +110,7 @@ if uploaded_file and gemini_api_key:
                 success = False
                 
                 for attempt in range(max_attempts):
-                    for model_name in ['gemini-3.6-flash', 'gemini-3.6-pro']:
+                    for model_name in ['gemini-2.5-flash', 'gemini-2.5-pro']:
                         try:
                             response = client.models.generate_content(
                                 model=model_name,
@@ -123,7 +123,7 @@ if uploaded_file and gemini_api_key:
                             success = True
                             break
                         except Exception as e:
-                            if "503" not in str(e):
+                            if "503" not in str(e) and "404" not in str(e):
                                 raise e
                     
                     if success:
@@ -131,7 +131,7 @@ if uploaded_file and gemini_api_key:
                         
                     if attempt < max_attempts - 1:
                         wait_time = 4 * (2 ** attempt)
-                        st.write(f"⏳ Gemini servers busy (503). Waiting {wait_time}s before retry {attempt + 2}/{max_attempts}...")
+                        st.write(f"⏳ Gemini servers busy. Waiting {wait_time}s before retry {attempt + 2}/{max_attempts}...")
                         time.sleep(wait_time)
                 
                 # Step 2.5: OpenRouter Fallback
@@ -140,7 +140,7 @@ if uploaded_file and gemini_api_key:
                         st.write("⚠️ Gemini models unavailable. Initiating free OpenRouter fallback...")
                         raw_text = fallback_openrouter_extract(pdf_bytes, prompt, openrouter_api_key)
                     else:
-                        raise Exception("503 UNAVAILABLE: Gemini servers are overloaded. Please add an OpenRouter API key in settings for fallback, or try again later.")
+                        raise Exception("Gemini models are currently overloaded/unavailable. Please add an OpenRouter API key in sidebar settings for free backup fallback, or try again later.")
 
                 # Step 3: Parse and clean data
                 st.write("🧹 Cleaning extracted data & resolving ditto marks...")
@@ -149,7 +149,6 @@ if uploaded_file and gemini_api_key:
                 raw_text = raw_text.strip()
                 if raw_text.startswith("```"):
                     raw_text = raw_text.split("\n", 1)[1].rsplit("\n", 1)[0]
-                # Sometimes the fallback model includes 'json' after the backticks
                 if raw_text.lower().startswith("json"):
                     raw_text = raw_text[4:].strip()
                 
