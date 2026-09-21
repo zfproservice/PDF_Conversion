@@ -13,9 +13,9 @@ st.set_page_config(
 
 st.title("📄 PDF to Editable Excel Converter")
 st.write(
-    "Upload a PDF tracking form or record. The app will extract table data,"
-    ' auto-fill ditto marks (`"`), and generate an Excel spreadsheet with'
-    " built-in local fallback."
+    "Upload a PDF tracking form or record. Gemini will extract all table"
+    ' data, auto-fill ditto marks (`"`), and generate a formatted Excel'
+    " spreadsheet."
 )
 
 # Retrieve API Key from Streamlit Secrets or sidebar input
@@ -134,7 +134,7 @@ if uploaded_file and gemini_api_key:
             )
             time.sleep(wait_time)
 
-        # Step 2.5: Local Fallback if Gemini is overloaded
+        # Step 2.5: Parse or Fallback
         df = None
         if success and raw_text:
           st.write("🧹 Cleaning extracted data & resolving ditto marks...")
@@ -150,15 +150,17 @@ if uploaded_file and gemini_api_key:
           df = pd.DataFrame(data)
         else:
           st.write(
-              "⚠️ Gemini servers busy. Switching to local structural"
+              "⚠️ Gemini servers busy. Attempting local structural"
               " extraction..."
           )
           progress_bar.progress(70)
           df = extract_pdf_locally(pdf_bytes)
-          if df is None:
+          if df is None or df.empty:
             raise Exception(
-                "Gemini servers are overloaded and local table extraction could"
-                " not parse this PDF format."
+                "Gemini servers are currently overloaded (503), and this PDF"
+                " appears to be a scanned image/form rather than a digital"
+                " document. Local extraction couldn't parse it. Please wait a"
+                " moment for Google servers to recover and try again."
             )
 
         # Post-processing
