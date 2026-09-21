@@ -22,7 +22,7 @@ col1, col2 = st.columns([2, 2])
 with col1:
   ai_provider = st.selectbox(
       "Select AI Provider",
-      ["Mistral AI (mistral-small)", "Google Gemini (gemini-1.5-flash)"],
+      ["Mistral AI (mistral-small)", "Google Gemini (gemini-2.5-flash)"],
   )
 
 uploaded_file = st.file_uploader("Upload your PDF document", type=["pdf"])
@@ -85,13 +85,13 @@ if uploaded_file is not None:
               "Content-Type": "application/json",
           }
 
-        else:  # Google Gemini
+        else:  # Google Gemini (Using current gemini-2.5-flash endpoint)
           if "GEMINI_API_KEY" not in st.secrets:
             st.error("GEMINI_API_KEY missing from Streamlit secrets.")
             st.stop()
           api_key = st.secrets["GEMINI_API_KEY"].strip()
 
-          url = f"[https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=){api_key}"
+          url = f"[https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=){api_key}"
           payload = {
               "contents": [{
                   "parts": [{"text": prompt}]
@@ -100,7 +100,7 @@ if uploaded_file is not None:
           }
           headers = {"Content-Type": "application/json"}
 
-        # Bulletproof URL sanitization (strips any accidental brackets, quotes, or spaces)
+        # Bulletproof URL sanitization
         url = url.strip("[]'\" \n\t")
 
         data_bytes = json.dumps(payload).encode("utf-8")
@@ -153,6 +153,12 @@ if uploaded_file is not None:
               "⏳ **Rate Limit Reached (429 Too Many Requests):** You've"
               " hit the limit for this provider. Try switching to the other"
               " AI provider in the dropdown above or wait a minute."
+          )
+        elif http_err.code == 404:
+          st.error(
+              "❌ **HTTP Error 404: Not Found:** The model endpoint was not"
+              " found. Please verify that your `GEMINI_API_KEY` is active and"
+              " correctly entered in Streamlit Secrets."
           )
         else:
           st.error(
