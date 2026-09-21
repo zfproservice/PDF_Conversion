@@ -1,5 +1,6 @@
 import io
 import json
+import urllib.error
 import urllib.request
 import pandas as pd
 import pymupdf
@@ -62,7 +63,7 @@ if uploaded_file is not None:
                 {extracted_text}
                 """
 
-        # 3. Safely assemble URL using variables (Prevents any bracket typo)
+        # 3. Call Mistral API using built-in urllib
         proto = "https"
         host = "api.mistral.ai"
         path = "/v1/chat/completions"
@@ -120,5 +121,17 @@ if uploaded_file is not None:
             ),
         )
 
+      except urllib.error.HTTPError as http_err:
+        if http_err.code == 429:
+          st.error(
+              "⏳ **Rate Limit Reached (429 Too Many Requests):** You've"
+              " made too many requests in a short time. Please wait about"
+              " 60 seconds before trying again."
+          )
+        else:
+          st.error(
+              f"HTTP Error {http_err.code}: {http_err.reason} - Please check"
+              " your API key or endpoint."
+          )
       except Exception as e:
         st.error(f"An error occurred during conversion: {e}")
