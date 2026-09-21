@@ -4,6 +4,7 @@ from google import genai
 from google.genai import types
 import io
 import json
+import time
 
 st.set_page_config(page_title="PDF to Excel Converter", page_icon="📊", layout="centered")
 
@@ -59,14 +60,25 @@ if uploaded_file and api_key:
                 4. Do not wrap the response in markdown code blocks like ```json. Return ONLY raw JSON text.
                 """
 
-                # Send request to Gemini 3.6 Flash (Free Tier)
-                response = client.models.generate_content(
-                    model='gemini-3.6-flash',
-                    contents=[
-                        types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
-                        prompt
-                    ]
-                )
+                # Send request to Gemini with automatic retries for 503 errors
+                max_attempts = 3
+                response = None
+                
+                for attempt in range(max_attempts):
+                    try:
+                        response = client.models.generate_content(
+                            model='gemini-3.6-flash',
+                            contents=[
+                                types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
+                                prompt
+                            ]
+                        )
+                        break  # Success, exit the retry loop
+                    except Exception as e:
+                        if "503" in str(e) and attempt < max_attempts - 1:
+                            time.sleep(4)  # Wait 4 seconds before retrying
+                        else:
+                            raise e  # Surface the error if out of retries
 
                 # Clean response text
                 raw_text = response.text.strip()
