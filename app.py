@@ -17,7 +17,7 @@ st.write(
     " convert it into an interactive table and Excel spreadsheet."
 )
 
-# AI Provider Selection (Including OpenRouter)
+# AI Provider Selection
 ai_provider = st.selectbox(
     "Select AI Provider",
     [
@@ -76,7 +76,7 @@ if uploaded_file is not None:
 
           url = "[https://openrouter.ai/api/v1/chat/completions](https://openrouter.ai/api/v1/chat/completions)"
           payload = {
-              "model": "mistralai/mistral-small-latest",
+              "model": "mistralai/mistral-small",  # Fixed OpenRouter model slug
               "messages": [{"role": "user", "content": prompt}],
           }
           headers = {
@@ -128,49 +128,4 @@ if uploaded_file is not None:
         with urllib.request.urlopen(req, timeout=60) as response:
           res_json = json.loads(response.read().decode("utf-8"))
 
-          if "OpenRouter" in ai_provider or "Mistral" in ai_provider:
-            content = res_json["choices"][0]["message"]["content"].strip()
-          else:
-            content = (
-                res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
-            )
-
-        # Clean markdown wrappers if returned by the model
-        if content.startswith("```"):
-          content = content.split("\n", 1)[1].rsplit("\n", 1)[0]
-        if content.lower().startswith("json"):
-          content = content[4:].strip()
-
-        # Parse into Pandas DataFrame
-        data = json.loads(content)
-        df = pd.DataFrame(data)
-
-        st.success("Successfully converted PDF to Excel!")
-        st.dataframe(df, use_container_width=True)
-
-        # 4. Generate Excel file in memory
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-          df.to_excel(writer, index=False, sheet_name="Extracted Records")
-        excel_bytes = output.getvalue()
-        file_name = uploaded_file.name.replace(".pdf", ".xlsx")
-
-        st.download_button(
-            label="📥 Download Excel File",
-            data=excel_bytes,
-            file_name=file_name,
-            mime=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
-        )
-
-      except urllib.error.HTTPError as http_err:
-        error_body = (
-            http_err.read().decode("utf-8") if hasattr(http_err, "read") else ""
-        )
-        st.error(
-            f"HTTP Error {http_err.code}: {http_err.reason}\n\nServer Details:"
-            f" {error_body}"
-        )
-      except Exception as e:
-        st.error(f"An error occurred during conversion: {e}")
+          if "OpenRouter
