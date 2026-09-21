@@ -4,6 +4,7 @@ import time
 from google import genai
 from google.genai import types
 import pandas as pd
+import pdfplumber
 import streamlit as st
 
 st.set_page_config(
@@ -12,9 +13,9 @@ st.set_page_config(
 
 st.title("📄 PDF to Editable Excel Converter")
 st.write(
-    "Upload a PDF tracking form or record. Gemini will extract all table"
-    ' data, auto-fill ditto marks (`"`), and generate a formatted Excel'
-    " spreadsheet."
+    "Upload a PDF tracking form or record. The app will extract table data,"
+    ' auto-fill ditto marks (`"`), and generate an Excel spreadsheet with'
+    " built-in local fallback."
 )
 
 # Retrieve API Key from Streamlit Secrets or sidebar input
@@ -57,6 +58,21 @@ def df_to_excel(df: pd.DataFrame) -> bytes:
   return output.getvalue()
 
 
+def extract_pdf_locally(pdf_bytes: bytes) -> pd.DataFrame:
+  """Extracts tables locally using pdfplumber without any external API calls."""
+  all_rows = []
+  with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+    for page in pdf.pages:
+      table = page.extract_table()
+      if table:
+        all_rows.extend(table)
+
+  if all_rows and len(all_rows) > 1:
+    df = pd.DataFrame(all_rows[1:], columns=all_rows[0])
+    return df
+  return None
+
+
 if uploaded_file and gemini_api_key:
   if st.button("Convert to Excel", type="primary"):
     with st.status("Processing PDF file...", expanded=True) as status:
@@ -80,7 +96,7 @@ if uploaded_file and gemini_api_key:
                 4. Do not wrap the response in markdown code blocks like ```json. Return ONLY raw JSON text.
                 """
 
-        # Step 2: Extract data using Gemini AI with stable production models
+        # Step 2: Try Gemini AI with stable production models & retry backoff
         st.write("🤖 Extracting table data using Gemini AI...")
         progress_bar.progress(35)
 
@@ -118,36 +134,44 @@ if uploaded_file and gemini_api_key:
             )
             time.sleep(wait_time)
 
-        if not success or not raw_text:
-          raise Exception(
-              "Gemini servers are currently overloaded/unavailable. Please try"
-              " again in a few moments."
+        # Step 2.5: Local Fallback if Gemini is overloaded
+        df = None
+        if success and raw_text:
+          st.write("🧹 Cleaning extracted data & resolving ditto marks...")
+          progress_bar.progress(70)
+
+          raw_text = raw_text.strip()
+          if raw_text.startswith("```"):
+            raw_text = raw_text.split("\n", 1)[1].rsplit("\n", 1)[0]
+          if raw_text.lower().startswith("json"):
+            raw_text = raw_text[4:].strip()
+
+          data = json.loads(raw_text)
+          df = pd.DataFrame(data)
+        else:
+          st.write(
+              "⚠️ Gemini servers busy. Switching to local structural"
+              " extraction..."
           )
-
-        # Step 3: Parse and clean data
-        st.write("🧹 Cleaning extracted data & resolving ditto marks...")
-        progress_bar.progress(70)
-
-        raw_text = raw_text.strip()
-        if raw_text.startswith("```"):
-          raw_text = raw_text.split("\n", 1)[1].rsplit("\n", 1)[0]
-        if raw_text.lower().startswith("json"):
-          raw_text = raw_text[4:].strip()
-
-        data = json.loads(raw_text)
-        df = pd.DataFrame(data)
+          progress_bar.progress(70)
+          df = extract_pdf_locally(pdf_bytes)
+          if df is None:
+            raise Exception(
+                "Gemini servers are overloaded and local table extraction could"
+                " not parse this PDF format."
+            )
 
         # Post-processing
         df = clean_and_fill_df(df)
 
-        # Step 4: Formatting Excel document
+        # Step 3: Formatting Excel document
         st.write("📊 Generating formatted Excel file...")
         progress_bar.progress(90)
 
         excel_bytes = df_to_excel(df)
         file_name = uploaded_file.name.replace(".pdf", ".xlsx")
 
-        # Step 5: Finish
+        # Step 4: Finish
         progress_bar.progress(100)
         status.update(
             label="✅ Conversion Complete!", state="complete", expanded=False
