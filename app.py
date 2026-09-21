@@ -76,7 +76,7 @@ if uploaded_file is not None:
 
           url = "[https://openrouter.ai/api/v1/chat/completions](https://openrouter.ai/api/v1/chat/completions)"
           payload = {
-              "model": "mistralai/mistral-small",  # Fixed OpenRouter model slug
+              "model": "mistralai/mistral-small",
               "messages": [{"role": "user", "content": prompt}],
           }
           headers = {
@@ -125,7 +125,4 @@ if uploaded_file is not None:
             url, data=data_bytes, headers=headers, method="POST"
         )
 
-        with urllib.request.urlopen(req, timeout=60) as response:
-          res_json = json.loads(response.read().decode("utf-8"))
-
-          if "OpenRouter
+        with urllib.request.urlopen(req,
