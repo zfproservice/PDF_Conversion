@@ -8,7 +8,7 @@ import time
 
 st.set_page_config(page_title="PDF to Excel Converter", page_icon="📊", layout="centered")
 
-st.title("📄 Free PDF to Editable Excel Converter")
+st.title("📄 PDF to Editable Excel Converter")
 st.write("Upload a PDF tracking form or record. Gemini will extract all table data, auto-fill ditto marks (`\"`), and generate a formatted Excel spreadsheet.")
 
 # Retrieve API Key from Streamlit Secrets or sidebar input
@@ -44,9 +44,15 @@ def df_to_excel(df: pd.DataFrame) -> bytes:
 
 if uploaded_file and api_key:
     if st.button("Convert to Excel", type="primary"):
-        with st.spinner("Analyzing PDF with Gemini..."):
+        # Status container and progress bar setup
+        with st.status("Processing PDF file...", expanded=True) as status:
+            progress_bar = st.progress(0)
+            
             try:
-                # Initialize Gemini Client
+                # Step 1: Read PDF
+                st.write("📖 Reading uploaded PDF file...")
+                progress_bar.progress(15)
+                
                 client = genai.Client(api_key=api_key)
                 pdf_bytes = uploaded_file.read()
 
@@ -60,7 +66,10 @@ if uploaded_file and api_key:
                 4. Do not wrap the response in markdown code blocks like ```json. Return ONLY raw JSON text.
                 """
 
-                # Send request to Gemini with automatic retries for 503 errors
+                # Step 2: Extract data using Gemini API
+                st.write("🤖 Extracting table data using Gemini AI...")
+                progress_bar.progress(35)
+
                 max_attempts = 3
                 response = None
                 
@@ -73,14 +82,18 @@ if uploaded_file and api_key:
                                 prompt
                             ]
                         )
-                        break  # Success, exit the retry loop
+                        break  # Success, exit retry loop
                     except Exception as e:
                         if "503" in str(e) and attempt < max_attempts - 1:
-                            time.sleep(4)  # Wait 4 seconds before retrying
+                            st.write(f"⏳ Server busy (503). Retrying attempt {attempt + 2}/{max_attempts}...")
+                            time.sleep(4)
                         else:
-                            raise e  # Surface the error if out of retries
+                            raise e
 
-                # Clean response text
+                # Step 3: Parse and clean data
+                st.write("🧹 Cleaning extracted data & resolving ditto marks...")
+                progress_bar.progress(70)
+
                 raw_text = response.text.strip()
                 if raw_text.startswith("```"):
                     raw_text = raw_text.split("\n", 1)[1].rsplit("\n", 1)[0]
@@ -88,8 +101,19 @@ if uploaded_file and api_key:
                 data = json.loads(raw_text)
                 df = pd.DataFrame(data)
 
-                # Post-processing: fill down any lingering ditto marks or blanks
+                # Post-processing
                 df = clean_and_fill_df(df)
+
+                # Step 4: Formatting Excel document
+                st.write("📊 Generating formatted Excel file...")
+                progress_bar.progress(90)
+                
+                excel_bytes = df_to_excel(df)
+                file_name = uploaded_file.name.replace(".pdf", ".xlsx")
+
+                # Step 5: Finish
+                progress_bar.progress(100)
+                status.update(label="✅ Conversion Complete!", state="complete", expanded=False)
 
                 st.success("Successfully converted PDF to Excel!")
                 
@@ -97,10 +121,7 @@ if uploaded_file and api_key:
                 st.subheader("Data Preview")
                 st.dataframe(df)
 
-                # Generate Download File
-                excel_bytes = df_to_excel(df)
-                file_name = uploaded_file.name.replace(".pdf", ".xlsx")
-
+                # Download Button
                 st.download_button(
                     label="📥 Download Excel File",
                     data=excel_bytes,
@@ -109,6 +130,7 @@ if uploaded_file and api_key:
                 )
 
             except Exception as e:
+                status.update(label="❌ Conversion Failed", state="error", expanded=True)
                 st.error(f"An error occurred during conversion: {str(e)}")
 
 elif uploaded_file and not api_key:
