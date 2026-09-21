@@ -1,8 +1,8 @@
 import io
 import json
+from mistralai import Mistral
 import pandas as pd
 import pymupdf  # PyMuPDF for robust PDF text extraction
-import requests
 import streamlit as st
 
 # Page configuration
@@ -10,7 +10,7 @@ st.set_page_config(
     page_title="PDF to Excel Converter", page_icon="📊", layout="centered"
 )
 
-# Load API key securely from Streamlit Secrets (Sidebar settings removed)
+# Load API key securely from Streamlit Secrets (No sidebar settings)
 if "MISTRAL_API_KEY" in st.secrets:
   api_key = st.secrets["MISTRAL_API_KEY"]
 else:
@@ -62,27 +62,15 @@ if uploaded_file is not None:
                 {extracted_text}
                 """
 
-        # 3. Call Mistral API via requests
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": "mistral-small-latest",
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-        }
-
-        response = requests.post(
-            "[https://api.mistral.ai/v1/chat/completions](https://api.mistral.ai/v1/chat/completions)",
-            headers=headers,
-            json=payload,
-            timeout=60,
+        # 3. Call Mistral API using the official SDK
+        client = Mistral(api_key=api_key)
+        response = client.chat.complete(
+            model="mistral-small-latest",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
         )
-        response.raise_for_status()
 
-        result_json = response.json()
-        content = result_json["choices"][0]["message"]["content"].strip()
+        content = response.choices[0].message.content.strip()
 
         # Clean markdown wrappers if returned by the model
         if content.startswith("```"):
