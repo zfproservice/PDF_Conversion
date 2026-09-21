@@ -5,20 +5,27 @@ from google.genai import types
 import io
 import json
 import time
+import base64
+import requests
 
 st.set_page_config(page_title="PDF to Excel Converter", page_icon="📊", layout="centered")
 
 st.title("📄 PDF to Editable Excel Converter")
-st.write("Upload a PDF tracking form or record. Gemini will extract all table data, auto-fill ditto marks (`\"`), and generate a formatted Excel spreadsheet.")
+st.write("Upload a PDF tracking form or record. The app will extract table data, auto-fill ditto marks (`\"`), and generate an Excel spreadsheet. It includes a free fallback if primary servers are busy.")
 
-# Retrieve API Key from Streamlit Secrets or sidebar input
-api_key = st.secrets.get("GEMINI_API_KEY") if "GEMINI_API_KEY" in st.secrets else None
+# Retrieve API Keys from Streamlit Secrets or sidebar input
+gemini_api_key = st.secrets.get("GEMINI_API_KEY") if "GEMINI_API_KEY" in st.secrets else None
+openrouter_api_key = st.secrets.get("OPENROUTER_API_KEY") if "OPENROUTER_API_KEY" in st.secrets else None
 
-if not api_key:
-    with st.sidebar:
-        st.header("Settings")
-        api_key = st.text_input("Enter Gemini API Key:", type="password")
+with st.sidebar:
+    st.header("Settings")
+    if not gemini_api_key:
+        gemini_api_key = st.text_input("Enter Gemini API Key (Primary):", type="password")
         st.caption("Get a free key from [Google AI Studio](https://aistudio.google.com).")
+    
+    if not openrouter_api_key:
+        openrouter_api_key = st.text_input("Enter OpenRouter API Key (Optional Fallback):", type="password")
+        st.caption("Get a free key from [OpenRouter](https://openrouter.ai).")
 
 uploaded_file = st.file_uploader("Upload your PDF document", type=["pdf"])
 
@@ -42,9 +49,37 @@ def df_to_excel(df: pd.DataFrame) -> bytes:
             
     return output.getvalue()
 
-if uploaded_file and api_key:
+def fallback_openrouter_extract(pdf_bytes, prompt, key):
+    """Fallback extractor using OpenRouter's free vision models."""
+    base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "qwen/qwen-2-vl-72b-instruct:free",
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:application/pdf;base64,{base64_pdf}"},
+                },
+            ],
+        }],
+    }
+    res = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=60,
+    )
+    res.raise_for_status()
+    return res.json()["choices"][0]["message"]["content"]
+
+if uploaded_file and gemini_api_key:
     if st.button("Convert to Excel", type="primary"):
-        # Status container and progress bar setup
         with st.status("Processing PDF file...", expanded=True) as status:
             progress_bar = st.progress(0)
             
@@ -53,7 +88,7 @@ if uploaded_file and api_key:
                 st.write("📖 Reading uploaded PDF file...")
                 progress_bar.progress(15)
                 
-                client = genai.Client(api_key=api_key)
+                client = genai.Client(api_key=gemini_api_key)
                 pdf_bytes = uploaded_file.read()
 
                 prompt = """
@@ -66,16 +101,15 @@ if uploaded_file and api_key:
                 4. Do not wrap the response in markdown code blocks like ```json. Return ONLY raw JSON text.
                 """
 
-                # Step 2: Extract data using Gemini AI (Model Fallback & Backoff)
+                # Step 2: Extract data using Gemini AI
                 st.write("🤖 Extracting table data using Gemini AI...")
                 progress_bar.progress(35)
 
-                max_attempts = 4
-                response = None
+                max_attempts = 3
+                raw_text = None
                 success = False
                 
                 for attempt in range(max_attempts):
-                    # Try Flash first, then fallback to Pro if Flash is busy
                     for model_name in ['gemini-3.6-flash', 'gemini-3.6-pro']:
                         try:
                             response = client.models.generate_content(
@@ -85,31 +119,39 @@ if uploaded_file and api_key:
                                     prompt
                                 ]
                             )
+                            raw_text = response.text
                             success = True
-                            break  # Success, exit the model loop
+                            break
                         except Exception as e:
                             if "503" not in str(e):
-                                raise e  # Surface non-503 errors immediately
-
+                                raise e
+                    
                     if success:
-                        break  # Exit the retry loop
+                        break
                         
-                    # If both models return 503, wait with exponential backoff (4s, 8s, 16s)
                     if attempt < max_attempts - 1:
                         wait_time = 4 * (2 ** attempt)
-                        st.write(f"⏳ Servers busy (503). Waiting {wait_time}s before retry attempt {attempt + 2}/{max_attempts}...")
+                        st.write(f"⏳ Gemini servers busy (503). Waiting {wait_time}s before retry {attempt + 2}/{max_attempts}...")
                         time.sleep(wait_time)
                 
-                if not success or response is None:
-                    raise Exception("503 UNAVAILABLE: Both Flash and Pro models are currently overloaded. Please try again in a few moments.")
+                # Step 2.5: OpenRouter Fallback
+                if not success:
+                    if openrouter_api_key:
+                        st.write("⚠️ Gemini models unavailable. Initiating free OpenRouter fallback...")
+                        raw_text = fallback_openrouter_extract(pdf_bytes, prompt, openrouter_api_key)
+                    else:
+                        raise Exception("503 UNAVAILABLE: Gemini servers are overloaded. Please add an OpenRouter API key in settings for fallback, or try again later.")
 
                 # Step 3: Parse and clean data
                 st.write("🧹 Cleaning extracted data & resolving ditto marks...")
                 progress_bar.progress(70)
 
-                raw_text = response.text.strip()
+                raw_text = raw_text.strip()
                 if raw_text.startswith("```"):
                     raw_text = raw_text.split("\n", 1)[1].rsplit("\n", 1)[0]
+                # Sometimes the fallback model includes 'json' after the backticks
+                if raw_text.lower().startswith("json"):
+                    raw_text = raw_text[4:].strip()
                 
                 data = json.loads(raw_text)
                 df = pd.DataFrame(data)
@@ -130,11 +172,9 @@ if uploaded_file and api_key:
 
                 st.success("Successfully converted PDF to Excel!")
                 
-                # Show Preview
                 st.subheader("Data Preview")
                 st.dataframe(df)
 
-                # Download Button
                 st.download_button(
                     label="📥 Download Excel File",
                     data=excel_bytes,
@@ -146,5 +186,5 @@ if uploaded_file and api_key:
                 status.update(label="❌ Conversion Failed", state="error", expanded=True)
                 st.error(f"An error occurred during conversion: {str(e)}")
 
-elif uploaded_file and not api_key:
+elif uploaded_file and not gemini_api_key:
     st.warning("Please enter your Gemini API Key in the sidebar to proceed.")
