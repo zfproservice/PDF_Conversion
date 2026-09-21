@@ -17,21 +17,21 @@ st.write(
     " convert it into an interactive table and Excel spreadsheet."
 )
 
-# AI Provider Selection
-col1, col2 = st.columns([2, 2])
-with col1:
-  ai_provider = st.selectbox(
-      "Select AI Provider",
-      ["Mistral AI (mistral-small)", "Google Gemini (gemini-2.5-flash)"],
-  )
+# AI Provider Selection (Including OpenRouter)
+ai_provider = st.selectbox(
+    "Select AI Provider",
+    [
+        "OpenRouter (Universal - Recommended)",
+        "Mistral AI (Direct)",
+        "Google Gemini (Direct)",
+    ],
+)
 
 uploaded_file = st.file_uploader("Upload your PDF document", type=["pdf"])
 
 if uploaded_file is not None:
   if st.button("🚀 Convert to Excel", type="primary"):
-    with st.spinner(
-        f"Extracting text and processing with {ai_provider.split(' ')[0]}..."
-    ):
+    with st.spinner(f"Extracting text and processing with {ai_provider}..."):
       try:
         # 1. Extract text from PDF locally using PyMuPDF
         extracted_text = ""
@@ -68,7 +68,25 @@ if uploaded_file is not None:
         headers = {}
 
         # 3. Route request based on selected provider
-        if "Mistral" in ai_provider:
+        if "OpenRouter" in ai_provider:
+          if "OPENROUTER_API_KEY" not in st.secrets:
+            st.error("OPENROUTER_API_KEY missing from Streamlit secrets.")
+            st.stop()
+          api_key = st.secrets["OPENROUTER_API_KEY"].strip()
+
+          url = "[https://openrouter.ai/api/v1/chat/completions](https://openrouter.ai/api/v1/chat/completions)"
+          payload = {
+              "model": "mistralai/mistral-small-latest",
+              "messages": [{"role": "user", "content": prompt}],
+          }
+          headers = {
+              "Authorization": f"Bearer {api_key}",
+              "Content-Type": "application/json",
+              "HTTP-Referer": "[https://streamlit.io](https://streamlit.io)",
+              "X-Title": "PDF to Excel Converter",
+          }
+
+        elif "Mistral" in ai_provider:
           if "MISTRAL_API_KEY" not in st.secrets:
             st.error("MISTRAL_API_KEY missing from Streamlit secrets.")
             st.stop()
@@ -85,7 +103,7 @@ if uploaded_file is not None:
               "Content-Type": "application/json",
           }
 
-        else:  # Google Gemini (Using current gemini-2.5-flash endpoint)
+        else:  # Google Gemini (Direct)
           if "GEMINI_API_KEY" not in st.secrets:
             st.error("GEMINI_API_KEY missing from Streamlit secrets.")
             st.stop()
@@ -95,8 +113,7 @@ if uploaded_file is not None:
           payload = {
               "contents": [{
                   "parts": [{"text": prompt}]
-              }],
-              "generationConfig": {"temperature": 0.1},
+              }]
           }
           headers = {"Content-Type": "application/json"}
 
@@ -111,7 +128,7 @@ if uploaded_file is not None:
         with urllib.request.urlopen(req, timeout=60) as response:
           res_json = json.loads(response.read().decode("utf-8"))
 
-          if "Mistral" in ai_provider:
+          if "OpenRouter" in ai_provider or "Mistral" in ai_provider:
             content = res_json["choices"][0]["message"]["content"].strip()
           else:
             content = (
@@ -148,22 +165,12 @@ if uploaded_file is not None:
         )
 
       except urllib.error.HTTPError as http_err:
-        if http_err.code == 429:
-          st.error(
-              "⏳ **Rate Limit Reached (429 Too Many Requests):** You've"
-              " hit the limit for this provider. Try switching to the other"
-              " AI provider in the dropdown above or wait a minute."
-          )
-        elif http_err.code == 404:
-          st.error(
-              "❌ **HTTP Error 404: Not Found:** The model endpoint was not"
-              " found. Please verify that your `GEMINI_API_KEY` is active and"
-              " correctly entered in Streamlit Secrets."
-          )
-        else:
-          st.error(
-              f"HTTP Error {http_err.code}: {http_err.reason} - Please check"
-              " your API keys."
-          )
+        error_body = (
+            http_err.read().decode("utf-8") if hasattr(http_err, "read") else ""
+        )
+        st.error(
+            f"HTTP Error {http_err.code}: {http_err.reason}\n\nServer Details:"
+            f" {error_body}"
+        )
       except Exception as e:
         st.error(f"An error occurred during conversion: {e}")
