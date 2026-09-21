@@ -17,13 +17,13 @@ st.write(
     " convert it into an interactive table and Excel spreadsheet."
 )
 
-# AI Provider Selection
+# AI Provider Selection - Google Gemini set as default for reliability
 ai_provider = st.selectbox(
     "Select AI Provider",
     [
-        "OpenRouter (Universal - Recommended)",
+        "Google Gemini (Direct - Recommended)",
         "Mistral AI (Direct)",
-        "Google Gemini (Direct)",
+        "OpenRouter (Universal)",
     ],
 )
 
@@ -68,23 +68,19 @@ if uploaded_file is not None:
         headers = {}
 
         # 3. Route request based on selected provider
-        if "OpenRouter" in ai_provider:
-          if "OPENROUTER_API_KEY" not in st.secrets:
-            st.error("OPENROUTER_API_KEY missing from Streamlit secrets.")
+        if "Google Gemini" in ai_provider:
+          if "GEMINI_API_KEY" not in st.secrets:
+            st.error("GEMINI_API_KEY missing from Streamlit secrets.")
             st.stop()
-          api_key = st.secrets["OPENROUTER_API_KEY"].strip()
+          api_key = st.secrets["GEMINI_API_KEY"].strip()
 
-          url = "[https://openrouter.ai/api/v1/chat/completions](https://openrouter.ai/api/v1/chat/completions)"
+          url = f"[https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=){api_key}"
           payload = {
-              "model": "google/gemini-2.5-flash",  # Stable OpenRouter model slug
-              "messages": [{"role": "user", "content": prompt}],
+              "contents": [{
+                  "parts": [{"text": prompt}]
+              }]
           }
-          headers = {
-              "Authorization": f"Bearer {api_key}",
-              "Content-Type": "application/json",
-              "HTTP-Referer": "[https://streamlit.io](https://streamlit.io)",
-              "X-Title": "PDF to Excel Converter",
-          }
+          headers = {"Content-Type": "application/json"}
 
         elif "Mistral" in ai_provider:
           if "MISTRAL_API_KEY" not in st.secrets:
@@ -103,19 +99,23 @@ if uploaded_file is not None:
               "Content-Type": "application/json",
           }
 
-        else:  # Google Gemini (Direct)
-          if "GEMINI_API_KEY" not in st.secrets:
-            st.error("GEMINI_API_KEY missing from Streamlit secrets.")
+        else:  # OpenRouter
+          if "OPENROUTER_API_KEY" not in st.secrets:
+            st.error("OPENROUTER_API_KEY missing from Streamlit secrets.")
             st.stop()
-          api_key = st.secrets["GEMINI_API_KEY"].strip()
+          api_key = st.secrets["OPENROUTER_API_KEY"].strip()
 
-          url = f"[https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=){api_key}"
+          url = "[https://openrouter.ai/api/v1/chat/completions](https://openrouter.ai/api/v1/chat/completions)"
           payload = {
-              "contents": [{
-                  "parts": [{"text": prompt}]
-              }]
+              "model": "google/gemini-2.5-flash",
+              "messages": [{"role": "user", "content": prompt}],
           }
-          headers = {"Content-Type": "application/json"}
+          headers = {
+              "Authorization": f"Bearer {api_key}",
+              "Content-Type": "application/json",
+              "HTTP-Referer": "[https://streamlit.io](https://streamlit.io)",
+              "X-Title": "PDF to Excel Converter",
+          }
 
         # Bulletproof URL sanitization
         url = url.strip("[]'\" \n\t")
@@ -128,12 +128,12 @@ if uploaded_file is not None:
         with urllib.request.urlopen(req, timeout=60) as response:
           res_json = json.loads(response.read().decode("utf-8"))
 
-          if "OpenRouter" in ai_provider or "Mistral" in ai_provider:
-            content = res_json["choices"][0]["message"]["content"].strip()
-          else:
+          if "Google Gemini" in ai_provider:
             content = (
                 res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
             )
+          else:
+            content = res_json["choices"][0]["message"]["content"].strip()
 
         # Clean markdown wrappers if returned by the model
         if content.startswith("```"):
@@ -168,9 +168,18 @@ if uploaded_file is not None:
         error_body = (
             http_err.read().decode("utf-8") if hasattr(http_err, "read") else ""
         )
-        st.error(
-            f"HTTP Error {http_err.code}: {http_err.reason}\n\nServer Details:"
-            f" {error_body}"
-        )
+        if http_err.code == 404 and "OpenRouter" in ai_provider:
+          st.error(
+              "HTTP Error 404 from OpenRouter: This typically happens if your"
+              " OpenRouter account balance is empty. \n\n**Quick Fix:** Change"
+              " the AI Provider dropdown above to **Google Gemini (Direct)**"
+              " and make sure `GEMINI_API_KEY` is added to your Streamlit"
+              " secrets."
+          )
+        else:
+          st.error(
+              f"HTTP Error {http_err.code}: {http_err.reason}\n\nServer Details:"
+              f" {error_body}"
+          )
       except Exception as e:
         st.error(f"An error occurred during conversion: {e}")
