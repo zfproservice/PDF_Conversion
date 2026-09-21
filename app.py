@@ -1,8 +1,8 @@
 import io
 import json
+import urllib.request
 import pandas as pd
 import pymupdf
-import requests
 import streamlit as st
 
 # Page configuration
@@ -10,7 +10,10 @@ st.set_page_config(
     page_title="PDF to Excel Converter", page_icon="📊", layout="centered"
 )
 
-# Load API key securely from Streamlit Secrets with whitespace stripping
+# Visual check to confirm the new file is running
+st.sidebar.caption("App Version: v3-urllib (No Requests)")
+
+# Load API key securely from Streamlit Secrets
 if "MISTRAL_API_KEY" in st.secrets:
   api_key = st.secrets["MISTRAL_API_KEY"].strip()
 else:
@@ -62,26 +65,29 @@ if uploaded_file is not None:
                 {extracted_text}
                 """
 
-        # 3. Call Mistral API with hardcoded URL to prevent connection adapter errors
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
+        # 3. Call Mistral API using built-in urllib (Completely avoids requests library)
+        url = "[https://api.mistral.ai/v1/chat/completions](https://api.mistral.ai/v1/chat/completions)"
         payload = {
             "model": "mistral-small-latest",
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
         }
 
-        response = requests.post(
-            "[https://api.mistral.ai/v1/chat/completions](https://api.mistral.ai/v1/chat/completions)",
-            headers=headers,
-            json=payload,
-            timeout=60,
+        data_bytes = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data_bytes,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
         )
-        response.raise_for_status()
 
-        result_json = response.json()
+        with urllib.request.urlopen(req, timeout=60) as response:
+          response_body = response.read().decode("utf-8")
+          result_json = json.loads(response_body)
+
         content = result_json["choices"][0]["message"]["content"].strip()
 
         # Clean markdown wrappers if returned by the model
