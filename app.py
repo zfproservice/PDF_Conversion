@@ -50,14 +50,14 @@ def df_to_excel(df: pd.DataFrame) -> bytes:
     return output.getvalue()
 
 def fallback_openrouter_extract(pdf_bytes, prompt, key):
-    """Fallback extractor using OpenRouter's free vision models."""
+    """Fallback extractor using OpenRouter's auto-router free vision model."""
     base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
     payload = {
-        "model": "qwen/qwen-2-vl-72b-instruct:free",
+        "model": "openrouter/free",  # Automatically routes to an active free vision-capable model
         "messages": [{
             "role": "user",
             "content": [
