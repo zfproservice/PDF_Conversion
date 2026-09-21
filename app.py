@@ -1,201 +1,133 @@
+import base64
 import io
 import json
-import time
-from google import genai
-from google.genai import types
 import pandas as pd
-import pdfplumber
+import requests
 import streamlit as st
 
+# Streamlit Page Setup
 st.set_page_config(
-    page_title="PDF to Excel Converter", page_icon="📊", layout="centered"
+    page_title="PDF to Excel Converter (Mistral Powered)", layout="wide"
 )
 
-st.title("📄 PDF to Editable Excel Converter")
-st.write(
-    "Upload a PDF tracking form or record. Gemini will extract all table"
-    ' data, auto-fill ditto marks (`"`), and generate a formatted Excel'
-    " spreadsheet."
+st.title("📄 PDF to Excel Converter (Powered by Mistral AI)")
+st.markdown(
+    "Upload your scanned service records or forms (PDF). Mistral's vision model"
+    " will extract the tabular data, resolve any ditto marks (`\"`), and"
+    " convert it into an interactive table and Excel file."
 )
 
-# Retrieve API Key from Streamlit Secrets or sidebar input
-gemini_api_key = (
-    st.secrets.get("GEMINI_API_KEY") if "GEMINI_API_KEY" in st.secrets else None
-)
-
-if not gemini_api_key:
-  with st.sidebar:
-    st.header("Settings")
-    gemini_api_key = st.text_input("Enter Gemini API Key:", type="password")
-    st.caption("Get a free key from [Google AI Studio](https://aistudio.google.com).")
-
-uploaded_file = st.file_uploader("Upload your PDF document", type=["pdf"])
-
-
-def clean_and_fill_df(df: pd.DataFrame) -> pd.DataFrame:
-  """Replaces ditto marks and fills down missing values from above rows."""
-  df = df.replace(
-      to_replace=r'^\s*["\u201c\u201d\u201e\u201f\u2033\u2036]\s*$',
-      value=None,
-      regex=True,
+# Sidebar Configuration for API Key
+with st.sidebar:
+  st.header("⚙️ Configuration")
+  api_key_input = st.text_input(
+      "Mistral API Key", type="password", help="Get your free key from console.mistral.ai"
   )
-  df = df.ffill()
-  return df
+  if not api_key_input:
+    st.info(
+        "Please enter your Mistral API key to enable processing."
+    )
 
+# File Uploader
+uploaded_file = st.file_uploader(
+    "Upload Scanned PDF Document", type=["pdf"], accept_multiple_files=False
+)
 
-def df_to_excel(df: pd.DataFrame) -> bytes:
-  """Converts DataFrame into formatted Excel file in memory."""
-  output = io.BytesIO()
-  with pd.ExcelWriter(output, engine="openpyxl") as writer:
-    df.to_excel(writer, index=False, sheet_name="Extracted Records")
+if uploaded_file and api_key_input:
+  pdf_bytes = uploaded_file.read()
 
-    worksheet = writer.sheets["Extracted Records"]
-    for col in worksheet.columns:
-      max_len = max(len(str(cell.value or "")) for cell in col)
-      col_letter = col[0].column_letter
-      worksheet.column_dimensions[col_letter].width = max(max_len + 3, 12)
-
-  return output.getvalue()
-
-
-def extract_pdf_locally(pdf_bytes: bytes) -> pd.DataFrame:
-  """Extracts tables locally using pdfplumber without any external API calls."""
-  all_rows = []
-  with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-    for page in pdf.pages:
-      table = page.extract_table()
-      if table:
-        all_rows.extend(table)
-
-  if all_rows and len(all_rows) > 1:
-    df = pd.DataFrame(all_rows[1:], columns=all_rows[0])
-    return df
-  return None
-
-
-if uploaded_file and gemini_api_key:
-  if st.button("Convert to Excel", type="primary"):
-    with st.status("Processing PDF file...", expanded=True) as status:
-      progress_bar = st.progress(0)
-
+  if st.button("🚀 Extract Data & Convert to Excel", type="primary"):
+    with st.spinner("Processing scanned PDF with Mistral Vision API..."):
       try:
-        # Step 1: Read PDF
-        st.write("📖 Reading uploaded PDF file...")
-        progress_bar.progress(15)
+        # Convert PDF bytes to base64 string
+        base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
 
-        client = genai.Client(api_key=gemini_api_key)
-        pdf_bytes = uploaded_file.read()
-
-        prompt = """
-                Extract all tabular data from this PDF document into structured JSON format.
-                
-                Rules:
-                1. Output MUST be a valid JSON array of objects representing rows.
-                2. Extract all headers accurately (e.g., S/N, Customer, Model / Spec No, Serial No, Vehicle No, OEM, Travelling Start, Travelling End, Working Start, Working End, Report No, Date, Depot, Need to Down, Remarks).
-                3. If a cell contains a ditto mark (") or represents repeated text from the row above, output the actual repeated string value directly.
-                4. Do not wrap the response in markdown code blocks like ```json. Return ONLY raw JSON text.
-                """
-
-        # Step 2: Try Gemini AI with stable production models & retry backoff
-        st.write("🤖 Extracting table data using Gemini AI...")
-        progress_bar.progress(35)
-
-        max_attempts = 3
-        raw_text = None
-        success = False
-
-        for attempt in range(max_attempts):
-          for model_name in ["gemini-2.5-flash", "gemini-2.5-pro"]:
-            try:
-              response = client.models.generate_content(
-                  model=model_name,
-                  contents=[
-                      types.Part.from_bytes(
-                          data=pdf_bytes, mime_type="application/pdf"
-                      ),
-                      prompt,
-                  ],
-              )
-              raw_text = response.text
-              success = True
-              break
-            except Exception as e:
-              if "503" not in str(e) and "404" not in str(e):
-                raise e
-
-          if success:
-            break
-
-          if attempt < max_attempts - 1:
-            wait_time = 4 * (2**attempt)
-            st.write(
-                f"⏳ Gemini servers busy. Waiting {wait_time}s before retry"
-                f" {attempt + 2}/{max_attempts}..."
-            )
-            time.sleep(wait_time)
-
-        # Step 2.5: Parse or Fallback
-        df = None
-        if success and raw_text:
-          st.write("🧹 Cleaning extracted data & resolving ditto marks...")
-          progress_bar.progress(70)
-
-          raw_text = raw_text.strip()
-          if raw_text.startswith("```"):
-            raw_text = raw_text.split("\n", 1)[1].rsplit("\n", 1)[0]
-          if raw_text.lower().startswith("json"):
-            raw_text = raw_text[4:].strip()
-
-          data = json.loads(raw_text)
-          df = pd.DataFrame(data)
-        else:
-          st.write(
-              "⚠️ Gemini servers busy. Attempting local structural"
-              " extraction..."
-          )
-          progress_bar.progress(70)
-          df = extract_pdf_locally(pdf_bytes)
-          if df is None or df.empty:
-            raise Exception(
-                "Gemini servers are currently overloaded (503), and this PDF"
-                " appears to be a scanned image/form rather than a digital"
-                " document. Local extraction couldn't parse it. Please wait a"
-                " moment for Google servers to recover and try again."
-            )
-
-        # Post-processing
-        df = clean_and_fill_df(df)
-
-        # Step 3: Formatting Excel document
-        st.write("📊 Generating formatted Excel file...")
-        progress_bar.progress(90)
-
-        excel_bytes = df_to_excel(df)
-        file_name = uploaded_file.name.replace(".pdf", ".xlsx")
-
-        # Step 4: Finish
-        progress_bar.progress(100)
-        status.update(
-            label="✅ Conversion Complete!", state="complete", expanded=False
+        # Define prompt instructing the model to structure the data and clean ditto marks
+        prompt = (
+            "Analyze this scanned document/form carefully. Extract all table rows"
+            " and field records into a valid JSON array of objects containing"
+            " clear key-value pairs. If there are quotation marks or ditto"
+            " marks (\") representing repeated values from the row above,"
+            " resolve and fill them in with the actual value they represent."
+            " Return ONLY valid JSON without any surrounding explanation."
         )
 
-        st.success("Successfully converted PDF to Excel!")
+        headers = {
+            "Authorization": f"Bearer {api_key_input}",
+            "Content-Type": "application/json",
+        }
 
-        st.subheader("Data Preview")
-        st.dataframe(df)
+        # Payload for Mistral Chat Completions API with Vision
+        payload = {
+            "model": "mistral-small-latest",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": (
+                            f"data:application/pdf;base64,{base64_pdf}"
+                        ),
+                    },
+                ],
+            }],
+            "temperature": 0.1,
+        }
 
+        # Send request to Mistral API
+        response = requests.post(
+            "https://api.mistral.ai/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=120,
+        )
+        response.raise_for_status()
+
+        # Extract content from response
+        result_json = response.json()
+        content = result_json["choices"][0]["message"]["content"]
+
+        # Clean markdown code blocks if the model wrapped output in ```json ... ```
+        cleaned_content = content.strip()
+        if cleaned_content.startswith("```json"):
+          cleaned_content = cleaned_content[7:]
+        if cleaned_content.endswith("```"):
+          cleaned_content = cleaned_content[:-3]
+        cleaned_content = cleaned_content.strip()
+
+        # Parse JSON into Pandas DataFrame
+        data = json.loads(cleaned_content)
+        df = pd.DataFrame(data)
+
+        st.success("Data extracted successfully!")
+        st.dataframe(df, use_container_width=True)
+
+        # Prepare Excel download buffer
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+          df.to_excel(writer, index=False, sheet_name="Extracted Records")
+        excel_data = output.getvalue()
+
+        # Download Button
         st.download_button(
             label="📥 Download Excel File",
-            data=excel_bytes,
-            file_name=file_name,
+            data=excel_data,
+            file_name="extracted_service_records.xlsx",
             mime=(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             ),
         )
 
+      except requests.exceptions.RequestException as req_err:
+        st.error(f"API Connection Error: {req_err}")
+      except json.JSONDecodeError:
+        st.error(
+            "Failed to parse model output as JSON. Raw response from model:"
+        )
+        st.code(content)
       except Exception as e:
-        status.update(label="❌ Conversion Failed", state="error", expanded=True)
-        st.error(f"An error occurred during conversion: {str(e)}")
+        st.error(f"An unexpected error occurred: {e}")
 
-elif uploaded_file and not gemini_api_key:
-  st.warning("Please enter your Gemini API Key in the sidebar to proceed.")
+elif not api_key_input and uploaded_file:
+  st.warning("⚠️ Please provide your Mistral API Key in the sidebar to proceed.")
